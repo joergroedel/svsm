@@ -6,8 +6,8 @@ TARGET_PATH="debug"
 CARGO_ARGS=
 endif
 
-STAGE2_ELF = "target/svsm-target/${TARGET_PATH}/stage2"
-KERNEL_ELF = "target/svsm-target/${TARGET_PATH}/svsm"
+STAGE2_ELF = "target/x86_64-unknown-none/${TARGET_PATH}/stage2"
+KERNEL_ELF = "target/x86_64-unknown-none/${TARGET_PATH}/svsm"
 FS_FILE ?= none
 
 STAGE1_OBJS = stage1/stage1.o stage1/reset.o

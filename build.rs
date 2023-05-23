@@ -5,13 +5,15 @@
 // Author: Joerg Roedel <jroedel@suse.de>
 
 fn main() {
+    // Generic
+    println!("cargo:rustc-link-arg-bins=-nostdlib");
+    println!("cargo:rustc-link-arg-bins=-Wl,--build-id=none");
+    println!("cargo:rustc-link-arg-bins=-Wl,--no-dynamic-linker");
+
     // Stage 2
-    println!("cargo:rustc-link-arg-bin=stage2=-nostdlib");
-    println!("cargo:rustc-link-arg-bin=stage2=-Wl,--build-id=none");
+    println!("cargo:rustc-link-arg-bin=stage2=-no-pie");
     println!("cargo:rustc-link-arg-bin=stage2=-Wl,-Tstage2.lds");
 
     // SVSM 2
-    println!("cargo:rustc-link-arg-bin=svsm=-nostdlib");
-    println!("cargo:rustc-link-arg-bin=svsm=-Wl,--build-id=none");
     println!("cargo:rustc-link-arg-bin=svsm=-Wl,-Tsvsm.lds");
 }
