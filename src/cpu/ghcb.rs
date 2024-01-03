@@ -4,7 +4,7 @@
 //
 // Author: Jon Lange (jlange@microsoft.com)
 
-use crate::cpu::percpu::this_cpu_mut;
+use crate::cpu::percpu::this_cpu_unsafe;
 use crate::sev::ghcb::GHCB;
 
 use core::ops::{Deref, DerefMut};
@@ -30,7 +30,7 @@ impl DerefMut for GHCBRef {
 pub fn current_ghcb() -> GHCBRef {
     // FIXME - Add borrow checking to GHCB references.
     unsafe {
-        let cpu_ptr = this_cpu_mut();
+        let cpu_ptr = this_cpu_unsafe();
         let cpu = &mut *cpu_ptr;
         let ghcb = cpu.ghcb_unsafe();
         GHCBRef { ghcb }

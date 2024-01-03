@@ -269,7 +269,8 @@ impl Task {
         let offset = stack.top_of_stack(VirtAddr::from(0u64));
 
         let mapping = Arc::new(Mapping::new(stack));
-        let percpu_mapping = this_cpu_mut().new_mapping(mapping.clone())?;
+        let mut cpu = this_cpu_mut();
+        let percpu_mapping = cpu.new_mapping(mapping.clone())?;
 
         // We need to setup a context on the stack that matches the stack layout
         // defined in switch_context below.
@@ -328,6 +329,7 @@ global_asm!(
     r#"
         .text
 
+        .globl switch_context
     switch_context:
         // Save the current context. The layout must match the TaskContext structure.
         pushfq

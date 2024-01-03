@@ -354,7 +354,8 @@ pub fn is_current_task(id: u32) -> bool {
 }
 
 pub unsafe fn current_task_terminated() {
-    let mut rq = this_cpu().runqueue().lock_write();
+    let cpu = this_cpu();
+    let mut rq = cpu.runqueue().lock_write();
     let task_node = rq
         .current_task
         .as_mut()
