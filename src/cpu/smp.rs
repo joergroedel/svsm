@@ -8,7 +8,7 @@ extern crate alloc;
 
 use crate::acpi::tables::ACPICPUInfo;
 use crate::cpu::ghcb::current_ghcb;
-use crate::cpu::percpu::{this_cpu, this_cpu_mut, PerCpu};
+use crate::cpu::percpu::{get_current_apic_id, this_cpu_mut, PerCpu};
 use crate::cpu::vmsa::init_svsm_vmsa;
 use crate::requests::request_loop;
 use crate::task::{create_task, TASK_FLAG_SHARE_PT};
@@ -71,7 +71,7 @@ fn start_ap() {
     create_task(
         ap_request_loop,
         TASK_FLAG_SHARE_PT,
-        Some(this_cpu().get_apic_id()),
+        Some(get_current_apic_id()),
     )
     .expect("Failed to create AP initial task");
 }

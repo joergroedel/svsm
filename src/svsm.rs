@@ -27,8 +27,7 @@ use svsm::cpu::efer::efer_init;
 use svsm::cpu::gdt;
 use svsm::cpu::ghcb::current_ghcb;
 use svsm::cpu::idt::svsm::{early_idt_init, idt_init};
-use svsm::cpu::percpu::PerCpu;
-use svsm::cpu::percpu::{this_cpu, this_cpu_mut};
+use svsm::cpu::percpu::{get_current_apic_id, this_cpu, this_cpu_mut, PerCpu};
 use svsm::cpu::smp::start_secondary_cpus;
 use svsm::debug::gdbstub::svsm_gdbstub::{debug_break, gdbstub_start};
 use svsm::debug::stacktrace::print_stack;
@@ -366,12 +365,8 @@ pub extern "C" fn svsm_start(li: &KernelLaunchInfo, vb_addr: usize) {
     log::info!("BSP Runtime stack starts @ {:#018x}", bp);
 
     // Create the root task that runs the entry point then handles the request loop
-    create_task(
-        svsm_main,
-        TASK_FLAG_SHARE_PT,
-        Some(this_cpu().get_apic_id()),
-    )
-    .expect("Failed to create initial task");
+    create_task(svsm_main, TASK_FLAG_SHARE_PT, Some(get_current_apic_id()))
+        .expect("Failed to create initial task");
 
     panic!("SVSM entry point terminated unexpectedly");
 }
