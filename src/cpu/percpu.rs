@@ -458,8 +458,13 @@ impl PerCpu {
         self.reset_ip = reset_ip;
     }
 
-    pub fn ghcb(&mut self) -> &'static mut GHCB {
-        unsafe { self.ghcb.as_mut().unwrap() }
+    /// # Safety
+    ///
+    /// This routine performs no checks on the validity of the current GHCB
+    /// and should only be used by callers that can verify that the GHCB is
+    /// properly usable.
+    pub unsafe fn ghcb_unsafe(&mut self) -> *mut GHCB {
+        self.ghcb
     }
 
     pub fn alloc_svsm_vmsa(&mut self) -> Result<(), SvsmError> {
