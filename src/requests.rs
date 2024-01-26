@@ -58,7 +58,9 @@ fn request_loop_once(
         return Ok(false);
     }
 
-    let caa_addr = this_cpu().caa_addr().ok_or_else(|| {
+    let cpu = this_cpu();
+    let vmsa_ref = cpu.guest_vmsa_ref();
+    let caa_addr = vmsa_ref.caa_addr().ok_or_else(|| {
         log::error!("No CAA mapped - bailing out");
         SvsmReqError::FatalError(SvsmError::MissingCAA)
     })?;
@@ -66,6 +68,8 @@ fn request_loop_once(
     let guest_pending = GuestPtr::<u64>::new(caa_addr);
     let pending = guest_pending.read()?;
     guest_pending.write(0)?;
+    drop(vmsa_ref);
+    drop(cpu);
 
     if pending != 1 {
         return Ok(false);
