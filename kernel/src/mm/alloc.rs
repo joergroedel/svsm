@@ -507,7 +507,7 @@ pub struct MemInfo {
 /// as other details.
 #[verus_verify]
 #[derive(Debug)]
-struct MemoryRegion {
+struct HeapMemoryRegion {
     start_phys: PhysAddr,
     start_virt: VirtAddr,
     page_count: usize,
@@ -519,7 +519,7 @@ struct MemoryRegion {
 }
 
 #[verus_verify]
-impl MemoryRegion {
+impl HeapMemoryRegion {
     /// Creates a new [`MemoryRegion`] with default values.
     #[verus_spec(ret =>
         ensures
@@ -1688,7 +1688,7 @@ pub fn print_memory_info(info: &MemInfo) {
 
 /// Static spinlock-protected instance of [`MemoryRegion`] representing the
 /// root memory region.
-static ROOT_MEM: SpinLock<MemoryRegion> = SpinLock::new(MemoryRegion::new());
+static ROOT_MEM: SpinLock<HeapMemoryRegion> = SpinLock::new(HeapMemoryRegion::new());
 
 /// Allocates a single memory page from the root memory region.
 ///
@@ -2477,7 +2477,7 @@ impl Drop for TestRootMem<'_> {
         // SAFETY: Safe because layout calculates to the same size as during
         // allocation of the memory region.
         unsafe { dealloc(root_mem.start_virt.as_mut_ptr::<u8>(), layout) };
-        *root_mem = MemoryRegion::new();
+        *root_mem = HeapMemoryRegion::new();
 
         // Reset the Slabs
         *SLAB_PAGE_SLAB.lock() = SlabPageSlab::new();
