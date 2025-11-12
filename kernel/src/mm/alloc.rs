@@ -510,6 +510,7 @@ pub struct MemInfo {
 struct HeapMemoryRegion {
     start_phys: PhysAddr,
     start_virt: VirtAddr,
+    metadata_addr: VirtAddr,
     page_count: usize,
     nr_pages: [usize; MAX_ORDER],
     next_page: [usize; MAX_ORDER],
@@ -531,6 +532,7 @@ impl HeapMemoryRegion {
         Self {
             start_phys: PhysAddr::null(),
             start_virt: VirtAddr::null(),
+            metadata_addr: VirtAddr::null(),
             page_count: 0,
             nr_pages: [0; MAX_ORDER],
             next_page: [0; MAX_ORDER],
@@ -605,7 +607,7 @@ impl HeapMemoryRegion {
         proof! { self.lemma_page_info_ptr(pfn);}
         {
             proof_with!(Tracked(self.perms.borrow().info_ptr_exposed));
-            self.start_virt.as_mut_ptr::<PageStorageType>()
+            self.metadata_addr.as_mut_ptr::<PageStorageType>()
         }
         .wrapping_add(pfn)
     }
@@ -629,7 +631,7 @@ impl HeapMemoryRegion {
         proof! { self.lemma_page_info_ptr(pfn);}
         {
             proof_with!(Tracked(self.perms.borrow().info_ptr_exposed));
-            self.start_virt.as_ptr::<PageStorageType>()
+            self.metadata_addr.as_ptr::<PageStorageType>()
         }
         .wrapping_add(pfn)
     }
@@ -1438,15 +1440,20 @@ impl HeapMemoryRegion {
         let size = size_of::<PageStorageType>();
         let meta_pages = align_up(self.page_count * size, PAGE_SIZE) / PAGE_SIZE;
 
-        /* Mark page storage as reserved */
-        for i in 0..meta_pages {
-            let pg = PageInfo::Reserved(ReservedInfo);
+        /* Calculate the metadata address by reserving the top of the heap for
+         * metadata */
+        let alloc_pages = self.page_count - meta_pages;
+        self.metadata_addr = self.start_virt + (alloc_pages * PAGE_SIZE);
+
+        /* Mark all non-metadata pages as allocated */
+        for i in 0..alloc_pages {
+            let pg = PageInfo::Allocated(AllocatedInfo { order: 0 });
             self.write_page_info(i, pg);
         }
 
-        /* Mark all pages as allocated */
-        for i in meta_pages..self.page_count {
-            let pg = PageInfo::Allocated(AllocatedInfo { order: 0 });
+        /* Mark page storage as reserved */
+        for i in alloc_pages..self.page_count {
+            let pg = PageInfo::Reserved(ReservedInfo);
             self.write_page_info(i, pg);
         }
 
