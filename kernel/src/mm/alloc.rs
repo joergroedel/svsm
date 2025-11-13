@@ -1462,33 +1462,24 @@ impl HeapMemoryRegion {
          * pages will be freed individually so the correct orders can be
          * generated */
         let alignment = 1 << (MAX_ORDER - 1);
-        let first_aligned_page = align_up(meta_pages, alignment);
-        let last_aligned_page = align_down(self.page_count, alignment);
+        let last_aligned_page = align_down(self.page_count - meta_pages, alignment);
 
-        if first_aligned_page < last_aligned_page {
-            self.nr_pages[MAX_ORDER - 1] += (last_aligned_page - first_aligned_page) / alignment;
-            for i in (first_aligned_page..last_aligned_page).step_by(alignment) {
+        if last_aligned_page >= alignment {
+            self.nr_pages[MAX_ORDER - 1] += last_aligned_page / alignment;
+            for i in (0..last_aligned_page).step_by(alignment) {
                 self.mark_compound_page(i, MAX_ORDER - 1);
                 self.free_page_raw(i, MAX_ORDER - 1);
             }
 
-            if first_aligned_page < self.page_count {
-                self.nr_pages[0] += first_aligned_page - meta_pages;
-                for i in meta_pages..first_aligned_page {
+            self.nr_pages[0] = alloc_pages - last_aligned_page;
+            for i in last_aligned_page..meta_pages {
                     self.free_page_order(i, 0);
-                }
             }
 
-            if last_aligned_page > meta_pages {
-                self.nr_pages[0] += self.page_count - last_aligned_page;
-                for i in last_aligned_page..self.page_count {
-                    self.free_page_order(i, 0);
-                }
-            }
         } else {
             // Special case: Memory region size smaller than a MAX_ORDER allocation
-            self.nr_pages[0] = self.page_count - meta_pages;
-            for i in meta_pages..self.page_count {
+            self.nr_pages[0] = alloc_pages;
+            for i in 0..alloc_pages {
                 self.free_page_order(i, 0);
             }
         }
