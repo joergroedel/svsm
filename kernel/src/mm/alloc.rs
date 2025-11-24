@@ -56,6 +56,9 @@ impl From<AllocError> for SvsmError {
 #[verus_verify]
 pub const MAX_ORDER: usize = 6;
 
+/// Special marker for no-page
+const NO_PAGE: usize = usize::MAX;
+
 /// Calculates the order of a given size for page allocation.
 ///
 /// # Arguments
@@ -118,6 +121,8 @@ impl PageStorageType {
     const TYPE_SHIFT: u64 = 4;
     const TYPE_MASK: u64 = (1u64 << Self::TYPE_SHIFT) - 1;
     const NEXT_SHIFT: u64 = 12;
+    const NEXT_MASK: u64 = !((1u64 << Self::NEXT_SHIFT) - 1);
+    const NO_NEXT: usize = NO_PAGE & Self::NEXT_MASK as usize;
     const ORDER_MASK: u64 = (1u64 << (Self::NEXT_SHIFT - Self::TYPE_SHIFT)) - 1;
     // Slab item sizes are encoded in a u16
     const SLAB_MASK: u64 = 0xffff;
@@ -164,7 +169,13 @@ impl PageStorageType {
     #[verus_verify(dual_spec(spec_encode_next))]
     #[verus_spec(returns self.spec_encode_next(next_page))]
     fn encode_next(self, next_page: usize) -> Self {
-        Self(self.0 | (next_page as u64) << Self::NEXT_SHIFT)
+        let page: u64 = if next_page == NO_PAGE {
+            Self::NO_NEXT as u64
+        } else {
+            ((next_page as u64) << Self::NEXT_SHIFT) & Self::NEXT_MASK
+        };
+
+        Self(self.0 | page)
     }
 
     /// Encodes the virtual address of the slab
@@ -221,7 +232,12 @@ impl PageStorageType {
     )]
     fn decode_next(&self) -> usize {
         proof! {broadcast use lemma_bit_u64_shr_bound;}
-        (self.0 >> Self::NEXT_SHIFT) as usize
+        let next: usize = (self.0 & Self::NEXT_MASK) as usize;
+        if next == Self::NO_NEXT {
+            NO_PAGE
+        } else {
+            next >> Self::NEXT_SHIFT
+        }
     }
 
     /// Decodes the slab
@@ -511,6 +527,7 @@ struct HeapMemoryRegion {
     start_phys: PhysAddr,
     start_virt: VirtAddr,
     metadata_addr: VirtAddr,
+    meta_pfn: usize,
     page_count: usize,
     nr_pages: [usize; MAX_ORDER],
     next_page: [usize; MAX_ORDER],
@@ -534,8 +551,9 @@ impl HeapMemoryRegion {
             start_virt: VirtAddr::null(),
             metadata_addr: VirtAddr::null(),
             page_count: 0,
+            meta_pfn: 0,
             nr_pages: [0; MAX_ORDER],
-            next_page: [0; MAX_ORDER],
+            next_page: [NO_PAGE; MAX_ORDER],
             free_pages: [0; MAX_ORDER],
             #[cfg(verus_keep_ghost_body)]
             perms: Tracked::assume_new(),
@@ -764,7 +782,7 @@ impl HeapMemoryRegion {
     fn get_next_page(&mut self, order: usize) -> Result<usize, AllocError> {
         let pfn = self.next_page[order];
 
-        if pfn == 0 {
+        if pfn == NO_PAGE {
             return Err(AllocError::OutOfMemory);
         }
 
@@ -921,7 +939,7 @@ impl HeapMemoryRegion {
             .next_page
             .get(order)
             .ok_or(AllocError::InvalidPageOrder(order))?;
-        if next_page != 0 {
+        if next_page != NO_PAGE {
             return Ok(());
         }
 
@@ -1195,7 +1213,7 @@ impl HeapMemoryRegion {
         let first_pfn = self.next_page[order];
 
         // Handle special cases first
-        if first_pfn == 0 {
+        if first_pfn == NO_PAGE {
             // No pages for that order
             return Err(AllocError::OutOfMemory);
         } else if first_pfn == pfn {
@@ -1443,6 +1461,7 @@ impl HeapMemoryRegion {
         /* Calculate the metadata address by reserving the top of the heap for
          * metadata */
         let alloc_pages = self.page_count - meta_pages;
+        self.meta_pfn = alloc_pages;
         self.metadata_addr = self.start_virt + (alloc_pages * PAGE_SIZE);
 
         /* Mark all non-metadata pages as allocated */
