@@ -462,6 +462,16 @@ fn svsm_init(launch_info: &KernelLaunchInfo) {
     // a remote GDB connection
     //debug_break();
 
+    // Invalidate low-memory page tables if required for consistency.
+    if launch_info.lowmem_page_table_count != 0 {
+        SVSM_PLATFORM
+            .invalidate_lowmem_page_tables(
+                launch_info.lowmem_page_table_paddr,
+                launch_info.lowmem_page_table_count as usize,
+            )
+            .expect("failed to invalidate low-memory page tables");
+    }
+
     // Validate low memory if it was not validated in stage2.
     if !launch_info.lowmem_validated {
         // SAFETY: the launch information is trusted to represent the
