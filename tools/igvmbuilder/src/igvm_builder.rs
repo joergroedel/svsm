@@ -32,21 +32,28 @@ use zerocopy::IntoBytes;
 use crate::GpaMap;
 use crate::boot_params::BootParamType;
 use crate::cmd_options::{CmdOptions, Hypervisor};
+use crate::context::StartContextInfo;
 use crate::context::construct_native_start_context;
 use crate::context::construct_stage1_image;
 use crate::context::construct_start_context;
 use crate::context::construct_vmsa;
 use crate::cpuid::SnpCpuidPage;
 use crate::firmware::{Firmware, parse_firmware};
-use crate::paging::construct_init_page_tables;
+use crate::initial_stack::BootLoaderStack;
+use crate::initial_stack::InitialStack;
+use crate::initial_stack::Stage2Stack;
+use crate::paging::setup_init_page_tables;
 use crate::platform::PlatformMask;
 use crate::sipi::add_sipi_stub;
-use crate::stage2_stack::Stage2Stack;
 
 pub const SNP_COMPATIBILITY_MASK: u32 = 1u32 << 0;
 pub const NATIVE_COMPATIBILITY_MASK: u32 = 1u32 << 1;
 pub const TDP_COMPATIBILITY_MASK: u32 = 1u32 << 2;
 pub const VSM_COMPATIBILITY_MASK: u32 = 1u32 << 4;
+pub const FULL_COMPATIBILITY_MASK: u32 = SNP_COMPATIBILITY_MASK
+    | NATIVE_COMPATIBILITY_MASK
+    | TDP_COMPATIBILITY_MASK
+    | VSM_COMPATIBILITY_MASK;
 pub static COMPATIBILITY_MASK: PlatformMask = PlatformMask::new();
 
 pub const ANY_NATIVE_COMPATIBILITY_MASK: u32 = NATIVE_COMPATIBILITY_MASK | VSM_COMPATIBILITY_MASK;
@@ -64,6 +71,7 @@ const _: () = assert!(size_of::<InitialGuestContext>() as u64 <= PAGE_SIZE_4K);
 struct ImageLayout {
     cpuid_addr: u64,
     boot_params_gpa: u64,
+    stage2_boot_params: bool,
 }
 
 pub struct IgvmBuilder {
@@ -390,7 +398,8 @@ impl IgvmBuilder {
         )?;
 
         // Process stage2 data if present.
-        let (start_context, image_layout) = if let Some(stage2) = self.options.stage2.as_ref() {
+        let (start_context_info, image_layout) = if let Some(stage2) = self.options.stage2.as_ref()
+        {
             // Populate the stage 2 binary.
             self.add_data_pages_from_file(
                 &stage2.clone(),
@@ -398,77 +407,126 @@ impl IgvmBuilder {
                 COMPATIBILITY_MASK.get(),
             )?;
 
+            // Construct initial page tables if required.
+            let init_page_table_info = setup_init_page_tables(
+                self.gpa_map.init_page_tables.get_start(),
+                ANY_NATIVE_COMPATIBILITY_MASK,
+                &mut self.directives,
+            );
+
             // Populate the stage 2 stack.  This has different contents on each
             // platform.
-            let stage2_stack = Stage2Stack::new(&self.gpa_map, &boot_image_info);
+            let mut stage2_stack = Stage2Stack::new(&self.gpa_map, &boot_image_info);
             if COMPATIBILITY_MASK.contains(SNP_COMPATIBILITY_MASK) {
+                stage2_stack.stack_data().platform_type = SvsmPlatformType::Snp as u32;
                 stage2_stack.add_directive(
                     self.gpa_map.stage2_stack.get_start(),
-                    SvsmPlatformType::Snp,
                     SNP_COMPATIBILITY_MASK,
                     &mut self.directives,
                 );
             }
             if COMPATIBILITY_MASK.contains(TDP_COMPATIBILITY_MASK) {
+                stage2_stack.stack_data().platform_type = SvsmPlatformType::Tdp as u32;
                 stage2_stack.add_directive(
                     self.gpa_map.stage2_stack.get_start(),
-                    SvsmPlatformType::Tdp,
                     TDP_COMPATIBILITY_MASK,
                     &mut self.directives,
                 );
             }
+            // Native must be added last because it changes the common contents
+            // of the stack data.
             if COMPATIBILITY_MASK.contains(ANY_NATIVE_COMPATIBILITY_MASK) {
+                stage2_stack.stack_data().platform_type = SvsmPlatformType::Native as u32;
                 stage2_stack.add_directive(
                     self.gpa_map.stage2_stack.get_start(),
-                    SvsmPlatformType::Native,
-                    ANY_NATIVE_COMPATIBILITY_MASK,
-                    &mut self.directives,
-                );
-            }
-
-            let paging_root = if COMPATIBILITY_MASK.contains(ANY_NATIVE_COMPATIBILITY_MASK) {
-                // Include initial page tables.
-                construct_init_page_tables(
-                    self.gpa_map.init_page_tables.get_start(),
                     ANY_NATIVE_COMPATIBILITY_MASK,
                     &mut self.directives,
                 )
-            } else {
-                0
-            };
+            }
 
             // Construct a native context object to capture the start context.
             let start_rip = self.gpa_map.stage2_image.get_start();
             let start_rsp = self.gpa_map.stage2_stack.get_end() - size_of::<Stage2Stack>() as u64;
-            let start_context = construct_start_context(start_rip, start_rsp, paging_root, false);
+            let start_context_info = StartContextInfo {
+                start_rip,
+                start_rsp,
+                initial_cr3: init_page_table_info.paging_root,
+                long_mode: false,
+            };
             let image_layout = ImageLayout {
                 cpuid_addr: self.gpa_map.cpuid_page.get_start(),
                 boot_params_gpa: self.gpa_map.boot_param_block.get_start(),
+                stage2_boot_params: true,
             };
-            (start_context, image_layout)
+            (start_context_info, image_layout)
+        } else if let Some(ref bldr) = self.options.bldr {
+            // Populate the boot loader binary.
+            self.add_data_pages_from_file(
+                &bldr.clone(),
+                self.gpa_map.stage2_image.get_start(),
+                COMPATIBILITY_MASK.get(),
+            )?;
+
+            // Construct initial page tables if required.
+            let init_page_table_info = setup_init_page_tables(
+                self.gpa_map.init_page_tables.get_start(),
+                FULL_COMPATIBILITY_MASK,
+                &mut self.directives,
+            );
+
+            // Populate the boot loader stack.
+            let bldr_stack =
+                BootLoaderStack::new(&self.gpa_map, &boot_image_info, &init_page_table_info);
+            bldr_stack.add_directive(
+                self.gpa_map.stage2_stack.get_start(),
+                COMPATIBILITY_MASK.get(),
+                &mut self.directives,
+            );
+
+            // Construct a native context object to capture the start context.
+            let start_rip = self.gpa_map.stage2_image.get_start();
+            let start_rsp =
+                self.gpa_map.stage2_stack.get_end() - size_of::<BootLoaderStack>() as u64;
+            let start_context_info = StartContextInfo {
+                start_rip,
+                start_rsp,
+                initial_cr3: init_page_table_info.paging_root,
+                long_mode: false,
+            };
+            let image_layout = ImageLayout {
+                cpuid_addr: self.gpa_map.cpuid_page.get_start(),
+                boot_params_gpa: boot_image_info.boot_params_paddr,
+                stage2_boot_params: false,
+            };
+            (start_context_info, image_layout)
         } else {
-            // Stage2 is required on TDP and on SNP when VTOM is not enabled.
+            // Either a boot loader or stage2 is required on TDP and on SNP
+            // when VTOM is not enabled.
             if COMPATIBILITY_MASK.contains(TDP_COMPATIBILITY_MASK)
                 || (COMPATIBILITY_MASK.contains(SNP_COMPATIBILITY_MASK) && self.vtom == 0)
             {
-                return Err("stage2 required but not specified".into());
+                return Err("--bldr or --stage2 required but not specified".into());
             }
 
             // Generate a start context that describes the kernel entry point.
             let start_rip = boot_image_info.context.entry_point;
             let start_rsp = boot_image_info.context.initial_stack;
-            let start_context = construct_start_context(
+            let start_context_info = StartContextInfo {
                 start_rip,
                 start_rsp,
-                boot_image_info.context.paging_root,
-                true,
-            );
+                initial_cr3: 0,
+                long_mode: true,
+            };
             let image_layout = ImageLayout {
                 cpuid_addr: boot_image_info.cpuid_paddr,
                 boot_params_gpa: boot_image_info.boot_params_paddr,
+                stage2_boot_params: false,
             };
-            (start_context, image_layout)
+            (start_context_info, image_layout)
         };
+
+        // Construct a native context object to capture the start context.
+        let start_context = construct_start_context(start_context_info);
 
         // Populate firmware directives.
         if let Some(firmware) = &self.firmware {
@@ -598,7 +656,9 @@ impl IgvmBuilder {
         }
 
         // Add the boot parameter block
-        self.add_param_block(param_block, &image_layout);
+        if image_layout.stage2_boot_params {
+            self.add_param_block(param_block, &image_layout);
+        }
 
         // Add optional filesystem image
         if let Some(fs) = &self.options.filesystem {
@@ -627,9 +687,24 @@ impl IgvmBuilder {
             )?;
         }
         if COMPATIBILITY_MASK.contains(TDP_COMPATIBILITY_MASK) {
-            // Insert a zero page in place of the CPUID page
+            // Insert a zero page in place of the CPUID page.  If not using
+            // stage2, this should be placed at the kernel CPUID location and
+            // not the stage2 CPUID location since the boot loader will not
+            // take action to copy the empty page.  This means the page at the
+            // boot loader address will not be accepted, but it's not
+            // referenced in the boot loader so the lack of acceptance will
+            // not cause a problem.  When the boot loader range is invalidated
+            // later by the kernel, this page will already be invalidated,
+            // but since invalidation on TDX is a no-op, this will not create
+            // any problems.
+            let cpuid_addr = if self.options.stage2.is_some() {
+                image_layout.cpuid_addr
+            } else {
+                boot_image_info.cpuid_paddr
+            };
+
             self.add_empty_pages(
-                image_layout.cpuid_addr,
+                cpuid_addr,
                 PAGE_SIZE_4K,
                 TDP_COMPATIBILITY_MASK,
                 IgvmPageDataType::NORMAL,

@@ -10,6 +10,13 @@ use igvm_defs::{IgvmPageDataFlags, IgvmPageDataType, PAGE_SIZE_4K};
 use zerocopy::{Immutable, IntoBytes};
 
 use crate::gpa_map::LOWMEM_PT_COUNT;
+use crate::igvm_builder::COMPATIBILITY_MASK;
+
+#[derive(Clone, Debug, Default)]
+pub struct InitPageTableInfo {
+    pub paging_root: u64,
+    pub map_vaddr: u64,
+}
 
 #[derive(Clone, Copy, Immutable, IntoBytes)]
 struct PageTablePage {
@@ -27,11 +34,23 @@ impl Default for PageTablePage {
     }
 }
 
-pub fn construct_init_page_tables(
+pub fn setup_init_page_tables(
     init_page_table_gpa: u64,
     compatibility_mask: u32,
     directives: &mut Vec<IgvmDirectiveHeader>,
-) -> u64 {
+) -> InitPageTableInfo {
+    if COMPATIBILITY_MASK.contains(compatibility_mask) {
+        construct_init_page_tables(init_page_table_gpa, compatibility_mask, directives)
+    } else {
+        InitPageTableInfo::default()
+    }
+}
+
+fn construct_init_page_tables(
+    init_page_table_gpa: u64,
+    compatibility_mask: u32,
+    directives: &mut Vec<IgvmDirectiveHeader>,
+) -> InitPageTableInfo {
     let mut page_tables: InitPageTables = InitPageTables::default();
 
     // Construct a PTE mask that represents writable, accessed, and dirty.
@@ -69,5 +88,14 @@ pub fn construct_init_page_tables(
     }
 
     // The paging root is the last of the pages.
-    init_page_table_gpa + 3 * PAGE_SIZE_4K
+    let paging_root = init_page_table_gpa + 3 * PAGE_SIZE_4K;
+
+    // The virtual address used for mappings is 4 GB, immediately following the
+    // identity map of the low 4 GB that was established.
+    let map_vaddr: u64 = 4 << 30;
+
+    InitPageTableInfo {
+        paging_root,
+        map_vaddr,
+    }
 }

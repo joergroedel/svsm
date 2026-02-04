@@ -19,17 +19,24 @@ use std::fs;
 use zerocopy::FromZeros;
 use zerocopy::IntoBytes;
 
-pub fn construct_start_context(
-    start_rip: u64,
-    start_rsp: u64,
-    initial_cr3: u64,
-    long_mode: bool,
-) -> Vec<X86Register> {
+#[derive(Clone, Debug, Default)]
+pub struct StartContextInfo {
+    pub start_rip: u64,
+    pub start_rsp: u64,
+    pub initial_cr3: u64,
+    pub long_mode: bool,
+}
+
+pub fn construct_start_context(context_info: StartContextInfo) -> Vec<X86Register> {
     let mut vec: Vec<X86Register> = Vec::new();
 
     // Determine the code segment attributes as 32-bit or 64-bit depending on
     // whether long mode was requested.
-    let cs_attributes = if long_mode { 0xa09b } else { 0xc09b };
+    let cs_attributes = if context_info.long_mode {
+        0xa09b
+    } else {
+        0xc09b
+    };
     let cs = SegmentRegister {
         attributes: cs_attributes,
         base: 0,
@@ -56,7 +63,7 @@ pub fn construct_start_context(
     // must recalculate the page tables.
     vec.push(X86Register::Cr0(0x80000031));
 
-    vec.push(X86Register::Cr3(initial_cr3));
+    vec.push(X86Register::Cr3(context_info.initial_cr3));
 
     // CR4.MCE | CR4.PAE.
     vec.push(X86Register::Cr4(0x60));
@@ -66,8 +73,8 @@ pub fn construct_start_context(
     vec.push(X86Register::Efer(0xD00));
 
     vec.push(X86Register::Rflags(2));
-    vec.push(X86Register::Rip(start_rip));
-    vec.push(X86Register::Rsp(start_rsp));
+    vec.push(X86Register::Rip(context_info.start_rip));
+    vec.push(X86Register::Rsp(context_info.start_rsp));
 
     vec
 }
