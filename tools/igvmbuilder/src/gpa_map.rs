@@ -135,7 +135,8 @@ impl GpaMap {
         let kernel = match options.hypervisor {
             Hypervisor::Qemu => {
                 // Place the kernel area at 512 GB with a maximum size of 16 MB.
-                GpaRange::new(0x0000008000000000, 0x01000000)?
+                  GpaRange::new(0x0000000010000000, 0x01000000)?
+//                GpaRange::new(0x000000007f000000, 0x01000000)? // Works!
             }
             Hypervisor::HyperV => {
                 // Place the kernel area at 64 MB with a maximum size of 16 MB.
