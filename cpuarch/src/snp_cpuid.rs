@@ -29,6 +29,16 @@ pub struct SnpCpuidTable {
     pub func: [SnpCpuidFn; SNP_CPUID_MAX_COUNT],
 }
 
+impl SnpCpuidTable {
+    pub fn entries(&self) -> &[SnpCpuidFn] {
+        &self.func[..self.count as usize]
+    }
+
+    pub fn entries_mut(&mut self) -> &mut [SnpCpuidFn] {
+        &mut self.func[..self.count as usize]
+    }
+}
+
 impl Default for SnpCpuidTable {
     fn default() -> Self {
         SnpCpuidTable {
