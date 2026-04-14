@@ -110,15 +110,12 @@ impl RunQueue {
             .unwrap_or_else(|| self.idle_task.clone().unwrap())
     }
 
-    /// Update state before a task is scheduled out. Non-idle tasks in RUNNING
-    /// state will be put at the end of the run_list. Terminated tasks will be
-    /// stored in the terminated_task field of the RunQueue and be destroyed
-    /// after the task-switch.
-    fn handle_task(&mut self, task: TaskPointer) {
-        if task.is_running() && !task.is_idle_task() {
+    /// Place a task back onto the run queue so it can be scheduled again.
+    fn enqueue_task(&mut self, task: TaskPointer) {
+        // Task termination should not follow this path.
+        debug_assert!(!task.is_terminated());
+        if !task.is_idle_task() {
             self.run_list.push_back(task);
-        } else if task.is_terminated() {
-            self.terminated_task = Some(task);
         }
     }
 
@@ -137,8 +134,14 @@ impl RunQueue {
 
     /// Prepares a task switch. The function checks if a task switch needs to
     /// be done and return pointers to the current and next task. It will
-    /// also call `handle_task()` on the current task in case a task-switch
+    /// also call `enqueue_task()` on the current task in case a task-switch
     /// is requested.
+    ///
+    /// # Parameters
+    ///
+    /// - `reschedule`: Indicates whether the current task being rescheduled.
+    ///   If so, it will be reinserted on the run list of the current
+    ///   processor.
     ///
     /// # Returns
     ///
@@ -148,12 +151,18 @@ impl RunQueue {
     /// # Panics
     ///
     /// Panics if there is no current task.
-    pub fn schedule_prepare(&mut self) -> Option<(TaskPointer, TaskPointer)> {
-        // Remove current and put it back into the RunQueue in case it is still
-        // runnable. This is important to make sure the last runnable task
-        // keeps running, even if it calls schedule()
-        let current = self.current_task.take().unwrap();
-        self.handle_task(current.clone());
+    pub fn schedule_prepare(&mut self, reschedule: bool) -> Option<(TaskPointer, TaskPointer)> {
+        let current = if reschedule {
+            // Remove current and put it back into the RunQueue.  This is
+            // important to make sure the last runnable task keeps running,
+            // even if it calls schedule()
+            let current = self.current_task.take().unwrap();
+            debug_assert!(current.is_running());
+            self.enqueue_task(current.clone());
+            current
+        } else {
+            self.current_task.as_ref().unwrap().clone()
+        };
 
         // Get next task and update current_task state
         let next = self.get_next_task();
@@ -163,6 +172,9 @@ impl RunQueue {
         if current != next {
             Some((current, next))
         } else {
+            // A task switch is expected unless the current task is being
+            // rescheduled.
+            debug_assert!(reschedule);
             None
         }
     }
@@ -277,7 +289,7 @@ pub fn start_kernel_task(
     TASKLIST.lock().list().push_back(task.clone());
 
     // Put task on the runqueue of this CPU
-    cpu.runqueue_mut().handle_task(task.clone());
+    cpu.runqueue_mut().enqueue_task(task.clone());
 
     schedule();
 
@@ -308,7 +320,7 @@ pub fn start_kernel_thread(start_info: KernelThreadStartInfo) -> Result<TaskPoin
     TASKLIST.lock().list().push_back(task.clone());
 
     // Put task on the runqueue of this CPU
-    cpu.runqueue_mut().handle_task(task.clone());
+    cpu.runqueue_mut().enqueue_task(task.clone());
 
     schedule();
 
@@ -345,7 +357,7 @@ pub fn finish_user_task(task: TaskPointer) {
     TASKLIST.lock().list().push_back(task.clone());
 
     // Put task on the runqueue of this CPU
-    this_cpu().runqueue_mut().handle_task(task);
+    this_cpu().runqueue_mut().enqueue_task(task);
 }
 
 pub fn current_task() -> TaskPointer {
@@ -365,9 +377,14 @@ pub fn is_current_task(id: u32) -> bool {
 /// # Panic
 ///
 /// This function must only be called after scheduling is initialized, otherwise it will panic.
-pub fn current_task_terminated() {
+fn current_task_terminated() {
     let cpu = this_cpu();
     let mut rq = cpu.runqueue_mut();
+
+    // Capture a reference to the current task so that it remains referenced
+    // until the next scheduling operation completes.
+    rq.terminated_task = rq.current_task.clone();
+
     let task_node = rq
         .current_task
         .as_mut()
@@ -378,12 +395,22 @@ pub fn current_task_terminated() {
     unsafe { TASKLIST.lock().terminate(task_node.clone()) }
 }
 
-pub fn terminate() {
+pub fn terminate() -> ! {
+    // Terminating a task will result in a task change, so preemption must
+    // be allowable.
+    preemption_checks();
     current_task_terminated();
-    schedule();
+
+    // The current task will not run again, so switch to a different task.
+    select_new_task(false);
+    unreachable!("terminated task rescheduled");
 }
 
 pub fn go_idle() {
+    // Entering an idle state will result in a task change, so preemption must
+    // be allowable.
+    preemption_checks();
+
     // Mark this task as blocked and indicate that it is waiting for wake after
     // idle.  Only one task on each CPU can be in the wake-from-idle state at
     // one time.
@@ -396,10 +423,14 @@ pub fn go_idle() {
 
     // Find another task to run.  If no other task is runnable, then the idle
     // thread will execute.
-    schedule();
+    select_new_task(false);
 }
 
 pub fn set_affinity(cpu_index: usize) {
+    // Changes to affinity mak cause a scheduling change, so verify that
+    // scheduling operations are safe.
+    preemption_checks();
+
     // Affinity signaling is only required if the target CPU is not the current
     // CPU.
     if cpu_index != this_cpu().get_cpu_index() {
@@ -415,7 +446,7 @@ pub fn set_affinity(cpu_index: usize) {
 
         // Find another task to run.  The scheduler will complete the affinity
         // change once a new task has been selected on this processor.
-        schedule();
+        select_new_task(false);
     }
 }
 
@@ -507,9 +538,16 @@ pub fn schedule() {
     // check if preemption is safe
     preemption_checks();
 
+    select_new_task(true);
+}
+
+/// Select another task to run.  If rescheduling is requested, the current
+/// task will be placed back on the current processor's run queue so it can
+/// be eligible to run again.
+fn select_new_task(reschedule: bool) {
     let guard = IrqGuard::new();
 
-    let work = this_cpu().schedule_prepare();
+    let work = this_cpu().schedule_prepare(reschedule);
 
     // !!! Runqueue lock must be release here !!!
     if let Some((current, next)) = work {
@@ -597,7 +635,7 @@ pub fn after_task_switch() {
 
 fn enqueue_task(task: TaskPointer) {
     task.set_task_running();
-    this_cpu().runqueue_mut().handle_task(task);
+    this_cpu().runqueue_mut().enqueue_task(task);
 }
 
 pub fn schedule_task(task: TaskPointer) {

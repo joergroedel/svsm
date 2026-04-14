@@ -9,7 +9,8 @@ use crate::address::VirtAddr;
 use crate::cpu::percpu::current_task;
 use crate::fs::find_dir;
 use crate::mm::guestmem::UserPtr;
-use crate::task::{current_task_terminated, exec_user, schedule};
+use crate::task::exec_user;
+use crate::task::terminate;
 use core::ffi::c_char;
 use syscall::SysCallError;
 
@@ -18,9 +19,7 @@ pub fn sys_exit(exit_code: u32) -> ! {
         "Terminating task {}, exit_code {exit_code}",
         current_task().get_task_name()
     );
-    current_task_terminated();
-    schedule();
-    unreachable!("schedule() returned in sys_exit()");
+    terminate();
 }
 
 pub fn sys_exec(file: usize, root: usize, _flags: usize) -> Result<u64, SysCallError> {
