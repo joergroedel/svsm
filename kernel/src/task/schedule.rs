@@ -769,10 +769,33 @@ global_asm!(
 /// 0x1ff8 = Size(GuardPage) + Size(ShadowStack) - 8; where Size(GuardPage) == Size(ShadowStack) == PAGE_SIZE.
 const CONTEXT_SWITCH_RESTORE_TOKEN: VirtAddr = SVSM_CONTEXT_SWITCH_SHADOW_STACK.const_add(0x1ff8);
 
-#[cfg(test)]
+#[cfg(all(test, test_in_svsm))]
 mod test {
+    extern crate alloc;
     use crate::cpu::percpu::{PERCPU_AREAS, this_cpu};
+    use crate::task::KernelThreadStartInfo;
     use crate::task::set_affinity;
+    use crate::task::start_kernel_task;
+    use alloc::string::String;
+    use core::sync::atomic::AtomicU32;
+    use core::sync::atomic::Ordering;
+
+    static EMPTY_TASK_COUNTER: AtomicU32 = AtomicU32::new(0);
+
+    fn empty_task(_parameter: usize) {
+        EMPTY_TASK_COUNTER.fetch_add(1, Ordering::Relaxed);
+    }
+
+    #[test]
+    #[cfg_attr(not(test_in_svsm), ignore = "Can only be run inside guest")]
+    fn test_task_termination() {
+        // Start a task that will immediately terminate.
+        start_kernel_task(
+            KernelThreadStartInfo::new(empty_task, 0),
+            String::from("test termination task"),
+        )
+        .expect("Failed to start test termination task");
+    }
 
     #[test]
     #[cfg_attr(not(test_in_svsm), ignore = "Can only be run inside guest")]
