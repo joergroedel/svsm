@@ -62,12 +62,16 @@ impl VsockStream {
     /// # Returns
     ///
     /// Returns a connected `VsockStream` on success, or an error if:
-    /// - The VSOCK device is not available (`VsockError::DriverError`)
+    /// - The VSOCK device is not available (`VsockError::DeviceNotAvailable`)
     /// - No free local ports are available
     /// - The connection fails
     pub fn connect(remote_port: u32, remote_cid: u32) -> Result<Self, SvsmError> {
-        let local_port = VSOCK_DEVICE.get_first_free_port()?;
-        VSOCK_DEVICE.connect(remote_cid, local_port, remote_port)?;
+        let device = VSOCK_DEVICE
+            .try_get_inner()
+            .map_err(|_| SvsmError::Vsock(VsockError::DeviceNotAvailable))?;
+
+        let local_port = device.get_first_free_port()?;
+        device.connect(remote_cid, local_port, remote_port)?;
 
         Ok(Self {
             local_port,
@@ -94,9 +98,13 @@ impl Read for VsockStream {
     /// # Errors
     ///
     /// Returns an error if:
-    /// - The VSOCK device is not available (`VsockError::DriverError`)
+    /// - The VSOCK device is not available (`VsockError::DeviceNotAvailable`)
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, Self::Err> {
-        match VSOCK_DEVICE.recv(self.remote_cid, self.local_port, self.remote_port, buf) {
+        let device = VSOCK_DEVICE
+            .try_get_inner()
+            .map_err(|_| SvsmError::Vsock(VsockError::DeviceNotAvailable))?;
+
+        match device.recv(self.remote_cid, self.local_port, self.remote_port, buf) {
             Ok(value) => Ok(value),
             Err(SvsmError::Vsock(VsockError::NotConnected)) => Ok(0),
             Err(SvsmError::Vsock(VsockError::PeerSocketShutdown)) => Ok(0),
@@ -117,20 +125,22 @@ impl Write for VsockStream {
     /// # Returns
     ///
     /// Returns the number of bytes written on success, or an error if:
-    /// - The VSOCK device is not available (`VsockError::DriverError`)
+    /// - The VSOCK device is not available (`VsockError::DeviceNotAvailable`)
     /// - The send operation fails
     fn write(&mut self, buf: &[u8]) -> Result<usize, SvsmError> {
-        VSOCK_DEVICE.send(self.remote_cid, self.local_port, self.remote_port, buf)
+        let device = VSOCK_DEVICE
+            .try_get_inner()
+            .map_err(|_| SvsmError::Vsock(VsockError::DeviceNotAvailable))?;
+
+        device.send(self.remote_cid, self.local_port, self.remote_port, buf)
     }
 }
 
 impl Drop for VsockStream {
     fn drop(&mut self) {
-        if VSOCK_DEVICE.try_get_inner().is_err() {
-            return;
+        if let Ok(device) = VSOCK_DEVICE.try_get_inner() {
+            let _ = device.shutdown(self.remote_cid, self.local_port, self.remote_port, true);
         }
-
-        let _ = VSOCK_DEVICE.shutdown(self.remote_cid, self.local_port, self.remote_port, true);
     }
 }
 

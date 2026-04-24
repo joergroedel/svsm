@@ -16,4 +16,6 @@ pub enum VsockError {
     NoPortsAvailable,
     /// Generic error for socket operations on a vsock device.
     DriverError,
+    /// Vsock device is not available in the system.
+    DeviceNotAvailable,
 }
