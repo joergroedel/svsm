@@ -180,7 +180,7 @@ clippy:
 	${CARGO} clippy ${CLIPPY_OPTIONS} --package svsm --target x86_64-unknown-none -- ${CLIPPY_ARGS}
 	${CARGO} clippy ${CLIPPY_OPTIONS} --package stage1 --target x86_64-unknown-none -- ${CLIPPY_ARGS} ${STAGE1_RUSTC_ARGS}
 	${CARGO} clippy ${CLIPPY_OPTIONS} --workspace --tests --exclude svsm -- ${CLIPPY_ARGS}
-	${CARGO} clippy ${CLIPPY_OPTIONS} --package svsm ${SVSM_ARGS_TEST} --tests -- ${CLIPPY_ARGS}
+	${CARGO} clippy ${CLIPPY_OPTIONS} --package svsm --tests -- ${CLIPPY_ARGS}
 
 clean:
 	cargo clean
