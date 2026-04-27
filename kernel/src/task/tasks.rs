@@ -40,7 +40,8 @@ use crate::types::{SVSM_USER_CS, SVSM_USER_DS};
 use crate::utils::{MemoryRegion, is_aligned};
 use intrusive_collections::{LinkedListAtomicLink, intrusive_adapter};
 
-use super::schedule::{after_task_switch, current_task_terminated, schedule};
+use super::schedule::after_task_switch;
+use super::schedule::terminate;
 use super::task_mm::{TaskKernelMapping, TaskMM};
 
 pub const INITIAL_TASK_ID: u32 = 1;
@@ -1003,8 +1004,7 @@ unsafe fn run_kernel_task<T: KernelThreadStartParameter>(
 }
 
 fn task_exit() {
-    current_task_terminated();
-    schedule();
+    terminate();
 }
 
 #[cfg(all(test, test_in_svsm))]
