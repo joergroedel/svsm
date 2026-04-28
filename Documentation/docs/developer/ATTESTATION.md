@@ -221,7 +221,7 @@ example, aTLS).
 ### Backend
 
 The back-end implements the specific attestation protocol that the communicating
-server implements. It is configurable with the `--backend` argument within
+server implements. It is configurable with the `--protocol` argument within
 launching the proxy. The supported backend attestation protocols include:
 
 - Key Broker Server (KBS)
