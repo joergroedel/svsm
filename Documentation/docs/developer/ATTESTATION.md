@@ -221,7 +221,7 @@ example, aTLS).
 ### Backend
 
 The back-end implements the specific attestation protocol that the communicating
-server implements. It is configurable with the `--backend` argument within
+server implements. It is configurable with the `--protocol` argument within
 launching the proxy. The supported backend attestation protocols include:
 
 - Key Broker Server (KBS)
@@ -287,10 +287,10 @@ SEV-SNP machine with an SVSM-enabled kernel.
 
      * `--url http://0.0.0.0:8080`: The attestation server is running at
        `http://0.0.0.0:8080`.
-     * `--protocol kbs-test`: The attestation server communicates via the KBS
+     * `--protocol kbs`: The attestation server communicates via the KBS
        protocol, configure the backend to use the KBS protocol.
      * `--unix /tmp/svsm-proxy.sock`: Listen for messages from SVSM on a socket
-       created in file `/tmp/svsm-proxy-sock`.
+       created in file `/tmp/svsm-proxy.sock`.
      * `--force`: Remove the `/tmp/svsm-proxy.sock` file (if it already exists)
        before creating the socket.
 
