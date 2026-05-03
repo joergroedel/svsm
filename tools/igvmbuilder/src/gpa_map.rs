@@ -20,6 +20,9 @@ use crate::cmd_options::{CmdOptions, Hypervisor};
 use crate::firmware::Firmware;
 use crate::igvm_builder::{COMPATIBILITY_MASK, TDP_COMPATIBILITY_MASK};
 
+pub const LOWMEM_PT_START: u64 = 0x10000;
+pub const LOWMEM_PT_COUNT: usize = 4;
+
 #[derive(Debug, Copy, Clone)]
 pub struct GpaRange {
     start: u64,
@@ -219,7 +222,10 @@ impl GpaMap {
             kernel_max_size,
             vmsa,
             vmsa_in_kernel_range,
-            init_page_tables: GpaRange::new(0x10000, 2 * PAGE_SIZE_4K)?,
+            init_page_tables: GpaRange::new(
+                LOWMEM_PT_START,
+                LOWMEM_PT_COUNT as u64 * PAGE_SIZE_4K,
+            )?,
         };
         if options.verbose {
             println!("GPA Map: {gpa_map:#X?}");

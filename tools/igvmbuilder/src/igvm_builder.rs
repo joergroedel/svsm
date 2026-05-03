@@ -426,24 +426,21 @@ impl IgvmBuilder {
                 );
             }
 
-            if COMPATIBILITY_MASK.contains(ANY_NATIVE_COMPATIBILITY_MASK) {
+            let paging_root = if COMPATIBILITY_MASK.contains(ANY_NATIVE_COMPATIBILITY_MASK) {
                 // Include initial page tables.
                 construct_init_page_tables(
                     self.gpa_map.init_page_tables.get_start(),
                     ANY_NATIVE_COMPATIBILITY_MASK,
                     &mut self.directives,
-                );
-            }
+                )
+            } else {
+                0
+            };
 
             // Construct a native context object to capture the start context.
             let start_rip = self.gpa_map.stage2_image.get_start();
             let start_rsp = self.gpa_map.stage2_stack.get_end() - size_of::<Stage2Stack>() as u64;
-            let start_context = construct_start_context(
-                start_rip,
-                start_rsp,
-                self.gpa_map.init_page_tables.get_start(),
-                false,
-            );
+            let start_context = construct_start_context(start_rip, start_rsp, paging_root, false);
             let image_layout = ImageLayout {
                 cpuid_addr: self.gpa_map.cpuid_page.get_start(),
                 boot_params_gpa: self.gpa_map.boot_param_block.get_start(),

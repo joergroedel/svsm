@@ -9,6 +9,8 @@ use igvm_defs::{IgvmPageDataFlags, IgvmPageDataType, PAGE_SIZE_4K};
 
 use zerocopy::{Immutable, IntoBytes};
 
+use crate::gpa_map::LOWMEM_PT_COUNT;
+
 #[derive(Clone, Copy, Immutable, IntoBytes)]
 struct PageTablePage {
     ptes: [u64; 512],
@@ -16,7 +18,7 @@ struct PageTablePage {
 
 #[derive(Clone, Copy, Default)]
 struct InitPageTables {
-    pages: [PageTablePage; 2],
+    pages: [PageTablePage; LOWMEM_PT_COUNT],
 }
 
 impl Default for PageTablePage {
@@ -29,19 +31,27 @@ pub fn construct_init_page_tables(
     init_page_table_gpa: u64,
     compatibility_mask: u32,
     directives: &mut Vec<IgvmDirectiveHeader>,
-) {
+) -> u64 {
     let mut page_tables: InitPageTables = InitPageTables::default();
 
-    // The initial page tables comprise a single PML4E that points to a page
-    // that includes entries which map the low 4 GB of the address space
-    // with an identity map of 1 GB pages.
-    // This PML4E is present, writable, accessed, and dirty.
-    page_tables.pages[0].ptes[0] = 0x63 | (init_page_table_gpa + PAGE_SIZE_4K);
+    // Construct a PTE mask that represents writable, accessed, and dirty.
+    let pte_mask: u64 = 0x63;
+
+    // The initial page tables comprise four pages: one PML4E that points to
+    // a page that includes entries which map the low 4 GB of the address space
+    // with an identity map of 1 GB pages, and which also contains pages
+    // sufficient to map 2 MB worth of data using 4 KB PTEs.  These pages are
+    // constructed in reverse order, so the first page is the placeholder
+    // for the 4 KB PTEs, and the last page is the paging root.
+    page_tables.pages[3].ptes[0] = pte_mask | (init_page_table_gpa + 2 * PAGE_SIZE_4K);
 
     for i in 0..4 {
         // This PTE is present, writable, accessed, dirty, and large page.
-        page_tables.pages[1].ptes[i] = 0xE3 | ((i as u64) << 30);
+        page_tables.pages[2].ptes[i] = 0xE3 | ((i as u64) << 30);
     }
+
+    page_tables.pages[2].ptes[4] = pte_mask | (init_page_table_gpa + PAGE_SIZE_4K);
+    page_tables.pages[1].ptes[0] = pte_mask | init_page_table_gpa;
 
     for (i, data) in page_tables.pages.iter().enumerate() {
         // Allocate a byte vector to contain a copy of the initial page table
@@ -57,4 +67,7 @@ pub fn construct_init_page_tables(
             data: page_table_data,
         });
     }
+
+    // The paging root is the last of the pages.
+    init_page_table_gpa + 3 * PAGE_SIZE_4K
 }
