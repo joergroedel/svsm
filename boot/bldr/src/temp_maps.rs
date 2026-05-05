@@ -63,6 +63,7 @@ impl<'a> TempMappings<'a> {
         // must be aligned to a page boundary.  The PTE encodes valid,
         // write, accessed, and dirty.
         assert!((paddr & 0xFFF) == 0);
+        let pte_index = self.index;
         self.ptes[self.index] = 0x63 | paddr | self.confidentiality_mask;
         let vaddr = self.mappings_vaddr as usize + (self.index << 12);
         self.index += 1;
@@ -73,14 +74,20 @@ impl<'a> TempMappings<'a> {
         // has been dropped.
         TempMappingRef {
             mappings: self,
+            pte_index,
             vaddr,
         }
+    }
+
+    fn clear_pte(&mut self, index: usize) {
+        self.ptes[index] = 0;
     }
 }
 
 #[derive(Debug)]
 pub struct TempMappingRef<'b, 'a> {
     mappings: &'b mut TempMappings<'a>,
+    pte_index: usize,
     vaddr: usize,
 }
 
@@ -97,6 +104,7 @@ impl TempMappingRef<'_, '_> {
 
 impl Drop for TempMappingRef<'_, '_> {
     fn drop(&mut self) {
+        self.mappings.clear_pte(self.pte_index);
         self.mappings.active = false;
     }
 }
