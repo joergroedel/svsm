@@ -52,6 +52,8 @@ pub struct KernelLaunchInfo {
     pub kernel_strtab_len: u64,
     pub vtom: u64,
     pub kernel_page_table_vaddr: u64,
+    pub lowmem_page_table_paddr: u32,
+    pub lowmem_page_table_count: u32,
     pub debug_serial_port: u16,
     pub vmsa_in_kernel_heap: bool,
     pub use_alternate_injection: bool,
@@ -96,6 +98,27 @@ pub struct Stage2LaunchInfo {
     pub kernel_fs_start: u32,
     pub kernel_fs_end: u32,
     pub boot_params: u32,
+    pub kernel_pml4e_index: u32,
+    pub _reserved: u32,
+}
+
+// This structure describes the parameters passed to the boot loader.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, FromBytes, IntoBytes, Immutable)]
+pub struct BldrLaunchInfo {
+    pub kernel_pdpt_paddr: u64,
+    pub kernel_launch_info: u64,
+    pub kernel_entry: u64,
+    pub kernel_stack: u64,
+    pub kernel_pt_paddr: u64,
+    pub kernel_pt_count: u64,
+    pub page_table_map_vaddr: u64,
+    pub page_table_start: u32,
+    pub page_table_end: u32,
+    pub page_table_root: u32,
+    pub cpuid_addr: u32,
+    pub platform_type: u32,
+    pub c_bit_position: u32,
     pub kernel_pml4e_index: u32,
     pub _reserved: u32,
 }
