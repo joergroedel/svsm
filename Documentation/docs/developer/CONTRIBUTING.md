@@ -6,6 +6,14 @@ GitHub against this repository: [https://github.com/coconut-svsm/svsm](https://g
 Patches may also be sent to the development mailing list
 (coconut-svsm@lists.linux.dev) for review.
 
+## Pull Requests
+
+Pull requests should have a suitable title decribing the changes (see commit
+format below). The PR description should explain the intent and content of the
+commits, as well as documenting any design decisions relevant to the changes.
+Treat the description as any other commit message, as it may be used in the
+merge commit for your PR.
+
 ## Commit Format
 
 Each commit description must start with a subject line that contains the
