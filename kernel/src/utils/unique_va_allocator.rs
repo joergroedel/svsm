@@ -11,7 +11,7 @@ use crate::types::{PAGE_SHIFT, PAGE_SIZE};
 use core::cmp::max;
 
 use intrusive_collections::rbtree::{Link, RBTree};
-use intrusive_collections::{KeyAdapter, intrusive_adapter};
+use intrusive_collections::{Bound, KeyAdapter, intrusive_adapter};
 
 extern crate alloc;
 use alloc::boxed::Box;
@@ -102,6 +102,37 @@ impl<T> UniqueVaAllocator<T> {
     ///
     /// Panics if `align` is not a power of two or is smaller than one page.
     pub fn alloc_aligned(&mut self, size: usize, align: usize, data: T) -> Option<usize> {
+        self.alloc_aligned_hint(self.start_pfn << PAGE_SHIFT, size, align, data)
+    }
+
+    /// Allocates a range at or above a hint with a specified alignment and
+    /// associates `data` with it.
+    ///
+    /// The allocation size is rounded up to its next power of two. The first
+    /// suitable address at or above `hint` is returned.
+    ///
+    /// # Arguments
+    ///
+    /// * `hint` - Address at which to begin searching.
+    /// * `size` - Number of bytes requested.
+    /// * `align` - Power-of-two alignment of at least one page.
+    /// * `data` - Metadata associated with the allocation.
+    ///
+    /// # Returns
+    ///
+    /// The allocation base address, or [`None`] if no suitable range exists or
+    /// the rounded size overflows.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `align` is not a power of two or is smaller than one page.
+    pub fn alloc_aligned_hint(
+        &mut self,
+        hint: usize,
+        size: usize,
+        align: usize,
+        data: T,
+    ) -> Option<usize> {
         assert!(align.is_power_of_two());
         assert!(align >= PAGE_SIZE);
 
@@ -112,8 +143,18 @@ impl<T> UniqueVaAllocator<T> {
 
         let align_pfn = align >> PAGE_SHIFT;
         let align_mask = align_pfn - 1;
-        let mut start_pfn = self.start_pfn.checked_add(align_mask)? & !align_mask;
-        let mut cursor = self.tree.front_mut();
+        let hint_pfn = hint.checked_add(PAGE_SIZE - 1)? >> PAGE_SHIFT;
+        let search_pfn = max(self.start_pfn, hint_pfn);
+        let mut start_pfn = search_pfn.checked_add(align_mask)? & !align_mask;
+        let mut cursor = self.tree.upper_bound_mut(Bound::Included(&start_pfn));
+
+        if cursor.is_null() {
+            cursor = self.tree.front_mut();
+        } else {
+            start_pfn = max(start_pfn, cursor.get().unwrap().end_pfn);
+            start_pfn = start_pfn.checked_add(align_mask)? & !align_mask;
+            cursor.move_next();
+        }
 
         while let Some(allocation) = cursor.get() {
             if allocation.start_pfn.saturating_sub(start_pfn) >= size_pfn {
@@ -133,6 +174,52 @@ impl<T> UniqueVaAllocator<T> {
         cursor.insert_before(Box::new(Allocation::new(start_pfn, end_pfn, data)));
 
         Some(start_pfn << PAGE_SHIFT)
+    }
+
+    /// Allocates a range at an exact base address and associates `data` with
+    /// it.
+    ///
+    /// The allocation size is rounded up to its next power of two.
+    ///
+    /// # Returns
+    ///
+    /// `Some(start)` on success, or [`None`] if the address is unaligned, the
+    /// range is unavailable, or the rounded size overflows.
+    pub fn alloc_at(&mut self, start: usize, size: usize, data: T) -> Option<usize> {
+        if !start.is_multiple_of(PAGE_SIZE) {
+            return None;
+        }
+
+        let size_pfn = size.checked_next_power_of_two()? >> PAGE_SHIFT;
+        if size_pfn == 0 {
+            return None;
+        }
+
+        let start_pfn = start >> PAGE_SHIFT;
+        let end_pfn = start_pfn.checked_add(size_pfn)?;
+        if start_pfn < self.start_pfn || end_pfn > self.end_pfn {
+            return None;
+        }
+
+        let mut cursor = self.tree.upper_bound_mut(Bound::Included(&start_pfn));
+        if !cursor.is_null() {
+            if cursor.get().unwrap().end_pfn > start_pfn {
+                return None;
+            }
+            cursor.move_next();
+        } else {
+            cursor = self.tree.front_mut();
+        }
+
+        if cursor
+            .get()
+            .is_some_and(|allocation| allocation.start_pfn < end_pfn)
+        {
+            return None;
+        }
+
+        cursor.insert_before(Box::new(Allocation::new(start_pfn, end_pfn, data)));
+        Some(start)
     }
 
     /// Allocates a naturally aligned range and associates `data` with it.
@@ -217,6 +304,34 @@ mod tests {
             allocator.alloc_aligned(16 * MIB, 256 * MIB, 2),
             Some(1280 * MIB)
         );
+    }
+
+    #[test]
+    fn allocates_at_or_above_hint() {
+        let mut allocator = UniqueVaAllocator::new(RANGE_START, RANGE_END);
+
+        assert_eq!(
+            allocator.alloc_aligned_hint(1200 * MIB, 16 * MIB, 64 * MIB, 1),
+            Some(1216 * MIB)
+        );
+        assert_eq!(
+            allocator.alloc_aligned_hint(1200 * MIB, 16 * MIB, 64 * MIB, 2),
+            Some(1280 * MIB)
+        );
+    }
+
+    #[test]
+    fn allocates_at_exact_address() {
+        let mut allocator = UniqueVaAllocator::new(RANGE_START, RANGE_END);
+
+        assert_eq!(
+            allocator.alloc_at(1280 * MIB, 256 * MIB, 1),
+            Some(1280 * MIB)
+        );
+        assert!(allocator.alloc_at(1280 * MIB, 256 * MIB, 2).is_none());
+        assert!(allocator.alloc_at(1279 * MIB + 1, 16 * MIB, 3).is_none());
+        assert!(allocator.alloc_at(RANGE_START - 4096, 4096, 4).is_none());
+        assert!(allocator.alloc_at(RANGE_END, 4096, 5).is_none());
     }
 
     #[test]
