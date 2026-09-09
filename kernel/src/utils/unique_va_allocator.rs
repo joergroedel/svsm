@@ -69,10 +69,10 @@ impl<T> UniqueVaAllocator<T> {
     ///
     /// Panics if either bound is not page-aligned or `start` is greater than
     /// `end`.
-    pub fn new(start: usize, end: usize) -> Self {
+    pub const fn new(start: usize, end: usize) -> Self {
         assert!(start <= end);
-        assert!(start.is_multiple_of(PAGE_SIZE));
-        assert!(end.is_multiple_of(PAGE_SIZE));
+        assert!(start & (PAGE_SIZE - 1) == 0);
+        assert!(end & (PAGE_SIZE - 1) == 0);
 
         Self {
             tree: RBTree::new(AllocationAdapter::new()),
